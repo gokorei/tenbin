@@ -1,0 +1,24 @@
+name: Measure proposal
+description: Propose a new measure. A number without a claim attached is a claim.
+title: "measure: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: claim
+    attributes:
+      label: Claim
+      description: Statement, what it does not mean, what would falsify it, and the denominator.
+    validations:
+      required: true
+  - type: textarea
+    id: refusal
+    attributes:
+      label: Refusal behavior
+      description: What happens when the corpus cannot support this measure?
+  - type: textarea
+    id: falsifier
+    attributes:
+      label: Falsifier
+      description: What observation would prove this measure wrong?
+    validations:
+      required: true

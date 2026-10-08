@@ -1,0 +1,31 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Local configuration. The API key is a capability; it never enters the repository.
+.env
+
+# Local readings. `report --archive` and `retrospective --archive` append to a
+# readings log (e.g. `retro.jsonl`), and `read-model build` writes a derived
+# snapshot to TENBIN_READ_MODEL_PATH. Both are local output, never fixtures:
+# tests write theirs under tmp_path.
+*.jsonl
+
+# The web app's store list, for both of the same reasons: a row can carry a
+# per-store `api_key` (or `api_key_env`), and it names internal infrastructure either way. A URL
+# is frequently the sensitive half of a sentence about where knowledge lives.
+#
+# Named rather than globbed on purpose. `stores*.yaml` would also swallow a
+# `stores.example.yaml`, which is a document worth committing and the sort of thing
+# an ignore rule should not quietly eat -- the failure mode is a contributor
+# wondering why their example is not in the repository.
+stores.yaml
+stores.local.yaml

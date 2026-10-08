@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in Tenbin renders the wrong figure, refuses the wrong thing, or crashes.
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Tenbin is a measurement program: a wrong number
+        with its claim attached is more useful than a crash log alone.
+        Please do not paste credentials (`stores.yaml`, `.env`, API keys).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `tenbin --version`, or the commit hash you ran.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: The figure/claim/refusal you got vs. the one you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Commands run, with secrets redacted. Prefer `tenbin claims` output where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: corpus
+    attributes:
+      label: Corpus shape (no real data)
+      description: e.g. store reachable? collection set? counts only, never record contents.

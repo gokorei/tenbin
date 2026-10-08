@@ -1,0 +1,33 @@
+name: Decline unsolicited pull requests
+
+# GitHub offers no setting that disables pull requests -- issues can be
+# switched off, PRs cannot -- so the no-PR policy stated in CONTRIBUTING.md
+# is enforced here instead of advised. `pull_request_target` runs this
+# workflow from the base branch, so a pull request cannot rewrite this rule
+# to exempt itself; no PR code is checked out and none is executed.
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  decline:
+    name: Close pull requests from outside the team
+    runs-on: ubuntu-latest
+    # OWNER, MEMBER and COLLABORATOR are the administrators and their
+    # collaborators; everyone else is outside the team until demand says
+    # otherwise. Bots land here too, which is correct: there is no automation
+    # in this repository whose pull requests should stay open.
+    if: >-
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'MEMBER' &&
+      github.event.pull_request.author_association != 'COLLABORATOR'
+    steps:
+      - name: Close with the policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr close "$PR" --comment "Thanks for the interest. This project is not accepting pull requests until there is demand for it: unsolicited PRs are closed without review, automatically. If you have a use case that changes that, please open an issue first describing the demand."

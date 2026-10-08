@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57
+      - name: Install locked dependencies
+        run: |
+          uv lock --check
+          uv sync --locked --all-extras
+      - name: Lint
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+      - name: Typecheck
+        run: uv run mypy
+      - name: Test
+        # ``-m "not integration"`` so a red seam test is never confused with a red
+        # measure test in this job's output. The seam has its own job below, and
+        # the two are only distinguishable in the UI if they are separate runs.
+        run: uv run pytest -m "not integration" --cov=src/tenbin --cov-report=term-missing -q
+      - name: Validate documentation
+        run: uv run python scripts/check_docs.py
+
+  seam:
+    name: Seam against a real Tanseki store
+    runs-on: ubuntu-latest
+
+    env:
+      # The seam suite's own variables, read at import time by
+      # tests/integration/test_seam_against_a_real_store.py. TANSEKI_SEAM_STORE is
+      # the opt-in that permits it to write to and delete from a store at all,
+      # and TANSEKI_SEAM_STRICT is what turns "no store" into a failure -- without
+      # it this job could go green having checked nothing, which is the outcome
+      # the whole suite exists to refuse.
+      TANSEKI_SEAM_STORE: "1"
+      TANSEKI_SEAM_STRICT: "1"
+      TANSEKI_SEAM_URL: "http://127.0.0.1:8088/v1"
+      TANSEKI_SEAM_COLLECTION: "insight-seam-check"
+      # The Tanseki commit the wire claims in tenbin.store.client were read from.
+      # Pinned because a floating tag would turn "the store changed" and "the
+      # claim was re-read" into the same green run, which is the confusion this
+      # job exists to remove. Bump it deliberately, and say why in the PR.
+      TANSEKI_REPOSITORY: https://github.com/gokorei/tanseki.git
+      # v1.0.0, the open-source squash release. The previous pin predates the
+      # squash, so it names a commit on no branch: still fetchable today, and
+      # one garbage collection away from breaking this job without warning.
+      # Re-verified at this commit before bumping: the cited bounds
+      # (RequestLimits batch 100, page limit 500, offset ceiling 10000, the
+      # repo/pr/jira/files edge keys) read the same, service/Dockerfile is
+      # where this job builds it from, and the /health route the wait step
+      # polls still exists. Behavioural re-verification is this job itself,
+      # on its next run.
+      TANSEKI_COMMIT: 30b19327064d29ff9ce2d991faa2a643a0136e31
+      # Set this to a published Tanseki image and the job pulls it instead of
+      # building one. Empty means "build from TANSEKI_COMMIT", which is the only
+      # option available today and the slower of the two. Pinned to a digest
+      # rather than a tag for the same reason TANSEKI_COMMIT is pinned: a floating
+      # tag turns "the store changed" and "the claim was re-read" into the same
+      # green run.
+      TANSEKI_IMAGE: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras
+      # No published Tanseki image exists that this repository can name, so the
+      # image is built from the source tree at TANSEKI_COMMIT using the
+      # Dockerfile Tanseki ships. Setting TANSEKI_IMAGE to a published image
+      # removes the step from this job entirely, which is what that variable
+      # is for.
+      #
+      # Cold-cache state, checked 2026-10-07 against the previous pin: a
+      # from-scratch build dies in :core:domain:compileKotlin with the
+      # Gradle daemon disappearing on a 4 GB Docker host, which is the shape of an
+      # OOM kill under a small heap rather than a broken Dockerfile -- the build
+      # fetched, configured, and compiled into Kotlin before dying. CI runners have
+      # 16 GB, so this is not evidence the step is broken. If this job goes red
+      # for a reason that is not a red test, a daemon death is still the first
+      # thing to check, and memory is the first suspect.
+      #
+      # 2026-10-08: this job now fails building the v1.0.0 pin, and the cause is
+      # upstream rather than here: `:service:compileKotlin` refuses with
+      # "Dependency verification failed", 11 artifacts (guava, jackson and
+      # junit-bom POMs/modules) whose checksums no longer match
+      # gradle/verification-metadata.xml. The fix is to regenerate that file in
+      # Tanseki, not to touch this job: reverting to the previous pin is not an
+      # option either, since the squash orphaned it. Until upstream lands, a red
+      # seam job means the wire claims are unverified against a running store,
+      # and the unit suite plus the docs gate are what is actually green.
+      - name: Resolve the Tanseki image
+        id: tanseki
+        run: |
+          if [ -n "$TANSEKI_IMAGE" ]; then
+            docker pull "$TANSEKI_IMAGE"
+            echo "tag=$TANSEKI_IMAGE" >> "$GITHUB_OUTPUT"
+          else
+            checkout="$RUNNER_TEMP/tanseki"
+            git init --quiet "$checkout"
+            git -C "$checkout" remote add origin "$TANSEKI_REPOSITORY"
+            git -C "$checkout" fetch --quiet --depth 1 origin "$TANSEKI_COMMIT"
+            git -C "$checkout" checkout --quiet FETCH_HEAD
+            docker build --tag tanseki-seam:built "$checkout" \
+              --file "$checkout/service/Dockerfile"
+            echo "tag=tanseki-seam:built" >> "$GITHUB_OUTPUT"
+          fi
+      # `library` rather than the default `vault` profile: vault mode wants a
+      # Pijul binary and takes a single-writer lock, and neither is what this
+      # job is testing. `--network host` rather than a published port because
+      # Tanseki refuses wildcard binds and Tenbin's client refuses plain HTTP to
+      # anything that is not loopback, so the daemon has to be reachable on
+      # 127.0.0.1 and a published port reaches the container's own loopback
+      # from nowhere.
+      - name: Start Tanseki
+        run: |
+          docker run --detach --name tanseki-seam --network host \
+            --env TANSEKI_PROFILE=library \
+            --env TANSEKI_PATH=/vault/library.db \
+            --env TANSEKI_INDEX_DIR=/vault/index \
+            "${{ steps.tanseki.outputs.tag }}"
+      - name: Wait for Tanseki to answer its own health route
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error "$TANSEKI_SEAM_URL/health"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Tanseki did not become healthy; its logs follow" >&2
+          docker logs tanseki-seam >&2
+          exit 1
+      # A separate job, not a step in the one above, so that a red seam test and
+      # a red measure test are two rows in the checks list rather than one row
+      # whose cause has to be guessed at.
+      - name: Test the seam against the real store
+        run: uv run pytest -m integration -q -rs
+
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras
+      - name: Audit dependencies
+        run: uv run pip-audit --strict --progress-spinner off || uvx pip-audit --strict --progress-spinner off

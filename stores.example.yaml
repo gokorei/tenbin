@@ -1,0 +1,18 @@
+#: Example store list. Copy to `stores.yaml` and set real values:
+#:
+#:   cp stores.example.yaml stores.yaml
+#:
+#: `stores.yaml` itself is git-ignored and never committed: a row can carry a
+#: per-store `api_key`, and it names internal infrastructure either way.
+#: Do not paste its contents into issues or pull requests.
+#:
+#: Every `collection` below is a placeholder and must be set. The store answers
+#: a query against an unknown collection with `200` and an empty result rather
+#: than an error, so an unset collection renders as a store holding no documents --
+#: indistinguishable from a store that really is empty. Kojutsu names its
+#: collections per instance (`tanseki_collection` in its `kojutsu.toml`); read it
+#: from there rather than guessing.
+stores:
+  - name: example-store
+    url: http://127.0.0.1:8088/v1
+    collection: CHANGE-ME
