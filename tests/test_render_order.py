@@ -36,7 +36,7 @@ from tenbin.measures.base import Figure, Rate, RateFigure
 from tenbin.report.base import Section
 from tenbin.report.document import CorpusHeader, Report
 from tenbin.report.json_ import render_json, report_as_dict
-from tenbin.report.markdown import render_markdown
+from tenbin.report.markdown import WHOLE_READ_SHORT, render_markdown
 from tenbin.report.ordering import Part, ordered_parts
 
 #: Fixed, so the rendered document is byte-identical between runs. This layer has no
@@ -246,8 +246,12 @@ def test_the_falsifier_appears_above_the_figure_because_a_reader_who_stops_early
     rendered = render_markdown(report)
 
     assert rendered.index(clean.claim.statement) < rendered.index(clean.claim.does_not_mean)
+    # The whole-read figure's completeness sentence is the short pointer to the
+    # header rather than the full paragraph; the position it holds is unchanged.
+    assert WHOLE_READ_SHORT in rendered
+    assert clean.rate_text() not in rendered
     assert (
-        rendered.index(DOES_NOT_MEAN) < rendered.index(FALSIFY) < rendered.index(clean.rate_text())
+        rendered.index(DOES_NOT_MEAN) < rendered.index(FALSIFY) < rendered.index(WHOLE_READ_SHORT)
     )
 
 
@@ -283,8 +287,9 @@ def test_the_denominator_comes_last_because_it_is_the_part_a_reader_looks_up_whe
     """
     report, (clean, _) = a_report()
     rendered = render_markdown(report)
+    block = section_block(rendered, clean.title)
 
-    assert rendered.index(clean.rate_text()) < rendered.index(clean.claim.denominator.render_text())
+    assert block.index(WHOLE_READ_SHORT) < block.index(clean.claim.denominator.render_text())
 
 
 def test_the_corpus_header_comes_first_because_it_decides_whether_any_number_below_it_means_what_a_reader_would_assume() -> (
@@ -308,7 +313,7 @@ def test_the_corpus_header_comes_first_because_it_decides_whether_any_number_bel
     assert rendered.index("**Corpus:**") < rendered.index("**Read at:**")
     assert rendered.index("**Completeness:**") < rendered.index("**Truncation:**")
     assert rendered.index("**Truncation:**") < rendered.index(clean.claim.statement)
-    assert rendered.index("**Corpus:**") < rendered.index(clean.rate_text())
+    assert rendered.index("**Corpus:**") < rendered.index(WHOLE_READ_SHORT)
     assert "15,000 records were not reached" in rendered
     assert "offset 10,000" in rendered
 
@@ -387,6 +392,7 @@ def test_the_json_keys_are_the_markdowns_parts_in_the_markdowns_order_because_a_
         "kind",
         "title",
         *(part.kind.value for part in ordered_parts(report.sections[0])),
+        "figure_data",
         "claim_kind",
         "granularity",
         "source",
@@ -402,11 +408,25 @@ def test_both_renderings_carry_every_claims_text_identically_because_one_rendere
     that catches a renderer inventing content: a summary in the Markdown the JSON does
     not carry, or a restructured payload that quietly dropped a caveat. It is asserted
     per part rather than per document so that a failure names the field that diverged.
+
+    The one exception is the whole-read completeness sentence, which the Markdown
+    renders as the short pointer (:data:`WHOLE_READ_SHORT`) while the JSON keeps the
+    full sentence: same position, abbreviated wording, with the header carrying the
+    verdict it points at.
     """
     report, _ = a_report()
     expected: list[str] = [part.text for part in report.corpus.parts()]
     for section in report.sections:
-        expected.extend(part.text for part in ordered_parts(section))
+        for part in ordered_parts(section):
+            if (
+                section.figure is not None
+                and section.figure.snapshot.completeness is Completeness.COMPLETE
+                and part.kind.value == "figure"
+            ):
+                rest = part.text.splitlines()[1:]
+                expected.append("\n".join([WHOLE_READ_SHORT, *rest]))
+            else:
+                expected.append(part.text)
     assert bullet_bodies(render_markdown(report)) == expected
 
     for section, entry in zip(report.sections, report_as_dict(report)["sections"], strict=True):

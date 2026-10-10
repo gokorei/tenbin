@@ -561,12 +561,14 @@ def test_a_refusal_that_a_ticket_unblocks_names_the_ticket_in_both_renderings_be
 def test_the_json_carries_the_same_four_claim_fields_as_the_markdown_because_a_machine_given_only_a_number_has_been_handed_the_output_this_program_refuses() -> (
     None
 ):
-    """The field set is exactly the parts, and every one of them is in both renderings.
+    """The field set is exactly the parts plus the typed figure, in both renderings.
 
     A consumer given ``{"figure": "..."}`` puts that string on a wallboard and drops the
     rest, so the payload has to make the caveats the cheap thing to keep. The field set
     is asserted as an equality rather than as a containment, so a field added for
-    convenience and a field dropped by a refactor both fail here.
+    convenience and a field dropped by a refactor both fail here. ``figure_data``
+    carries the same numbers as the ``figure`` text, keyed so a script need not
+    string-parse prose.
     """
     snapshot = truncated_read()
     figure = a_rate_figure(snapshot)
@@ -581,8 +583,13 @@ def test_the_json_carries_the_same_four_claim_fields_as_the_markdown_because_a_m
         "claim_kind",
         "granularity",
         "source",
+        "figure_data",
         *(part.kind.value for part in ordered_parts(section)),
     }
+    assert payload["figure_data"] == figure.value_data()
+    assert payload["figure_data"]["type"] == "rate"
+    assert payload["figure_data"]["numerator"] == 412
+    assert payload["figure_data"]["denominator_size"] == 500
     rendered = render_markdown(report)
     expected = [part.text for part in report.corpus.parts()]
     expected.extend(part.text for part in ordered_parts(section))
@@ -667,3 +674,110 @@ def test_a_measure_computing_for_a_slug_the_catalogue_refuses_renders_that_refus
     assert all(section.figure is None for section in report.sections), (
         "the only measure was the refused one, so the whole report should be refusals"
     )
+
+
+def test_the_markdown_summary_lists_every_section_in_order_because_a_reader_skims_before_they_read() -> (
+    None
+):
+    """The summary is one table row per section, in report order, ahead of the sections.
+
+    A thirty-section report with no entry point is read linearly or not at all.
+    The table carries the slug (the identifier to cite), the heading, the first
+    payload line, and the read's own completeness word -- and a refusal reads as
+    one, so a refused row cannot be mistaken for a result at skim speed.
+    """
+    snapshot = whole_read()
+    figure = a_rate_figure(snapshot)
+    refusal = default_registry().get("coverage-of-development")
+    report = a_report(
+        (
+            Section(claim=figure.claim, figure=figure, refusal=None),
+            Section(claim=None, figure=None, refusal=refusal),
+        )
+    )
+    rendered = render_markdown(report)
+
+    assert "## Summary" in rendered
+    assert rendered.index("## Summary") < rendered.index(f"## {figure.title}")
+    rows = [line for line in rendered.splitlines() if line.startswith("| `")]
+    assert [row.split("`")[1] for row in rows] == [figure.claim.slug, refusal.claim_slug]
+    assert "Refused" in rows[1]
+    assert Completeness.COMPLETE.value in rows[0]
+    assert figure.value_text().splitlines()[0] in rows[0]
+
+
+def test_a_whole_read_keeps_a_short_pointer_in_markdown_and_the_full_sentence_in_json() -> (
+    None
+):
+    """The repeated paragraph is shortened in exactly one renderer.
+
+    Thirty identical completeness paragraphs teach a reader to skip them, which
+    is where the truncated read that matters stops being seen. The Markdown
+    figure part keeps a short pointer to the header that already states the
+    verdict; the JSON keeps the full sentence, so a machine matching on words
+    sees no change.
+    """
+    from tenbin.report.markdown import WHOLE_READ_SHORT
+
+    snapshot = whole_read()
+    figure = a_rate_figure(snapshot)
+    report = a_report((Section(claim=figure.claim, figure=figure, refusal=None),))
+    rendered = render_markdown(report)
+    (payload,) = report_as_dict(report)["sections"]
+
+    assert WHOLE_READ_SHORT in rendered
+    assert figure.rate_text() not in rendered
+    assert figure.value_text() in rendered
+    assert payload["figure"].splitlines()[0] == figure.rate_text()
+
+
+def test_a_distribution_states_its_totals_because_buckets_without_a_total_are_mental_arithmetic() -> (
+    None
+):
+    """The totals line rides with the buckets, in prose and in values.
+
+    A reader handed twelve bucket counts and no total does the addition
+    themselves or does not do it; a script handed only the sentence parses it.
+    Both get the numbers: the last prose line totals counted and excluded, and
+    the typed payload carries the mappings with the same two totals.
+    """
+    from tenbin.measures.base import DistributionFigure
+
+    snapshot = whole_read()
+    figure = DistributionFigure(
+        claim=a_claim(),
+        snapshot=snapshot,
+        title="A distribution with exclusions",
+        values={"b": 2, "a": 1},
+        excluded={"no timestamp on the record": 4},
+    )
+    lines = figure.value_text().splitlines()
+
+    assert lines[-1] == "Counted: 3. Excluded: 4."
+    data = figure.value_data()
+    assert data["type"] == "distribution"
+    assert data["values"] == {"b": 2, "a": 1}
+    assert data["excluded"] == {"no timestamp on the record": 4}
+    assert data["counted"] == 3
+    assert data["excluded_total"] == 4
+    assert data["counted"] == sum(data["values"].values())
+
+    report = a_report((Section(claim=figure.claim, figure=figure, refusal=None),))
+    (payload,) = report_as_dict(report)["sections"]
+    assert payload["figure_data"] == data
+    assert "Counted: 3. Excluded: 4." in payload["figure"]
+
+
+def test_a_refusal_carries_no_figure_data_because_there_is_no_figure_to_type() -> None:
+    """Typed payloads exist for claim sections only.
+
+    A refusal with a ``figure_data`` of zeros would be the stub this program
+    refuses to emit wearing a new key. The key is absent rather than null, so
+    a consumer can tell "no figure" from "a figure nobody typed".
+    """
+    refusal = default_registry().get("coverage-of-development")
+    report = a_report((Section(claim=None, figure=None, refusal=refusal),))
+    (payload,) = report_as_dict(report)["sections"]
+
+    assert payload["kind"] == "refusal"
+    assert "figure_data" not in payload

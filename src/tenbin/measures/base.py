@@ -52,7 +52,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import ClassVar, Final, Protocol
+from typing import Any, ClassVar, Final, Protocol
 
 from tenbin.claims.mechanism import require_text
 from tenbin.claims.model import Claim, Denominator
@@ -240,6 +240,16 @@ class Figure:
         """
         return ""
 
+    def value_data(self) -> dict[str, Any]:
+        """The payload as typed values, for consumers that cannot parse prose.
+
+        Carries the same numbers :meth:`value_text` renders, keyed so a script
+        can read buckets, counts and rates without string-parsing a sentence.
+        The ``type`` key names the payload kind; subclasses extend the mapping
+        with their own fields.
+        """
+        return {"type": "figure"}
+
     def rate_text(self) -> str:
         """State whether the corpus behind this figure is whole, in no caller's words.
 
@@ -316,6 +326,10 @@ class CountFigure(Figure):
     def value_text(self) -> str:
         return f"{self.value:,}"
 
+    def value_data(self) -> dict[str, Any]:
+        """The count as a number rather than as formatted prose."""
+        return {"type": "count", "value": self.value}
+
 
 @dataclass(frozen=True)
 class RateFigure(Figure):
@@ -365,6 +379,16 @@ class RateFigure(Figure):
     def value_text(self) -> str:
         return self.rate.rate_text()
 
+    def value_data(self) -> dict[str, Any]:
+        """The rate as numbers: numerator, denominator size, and fraction."""
+        return {
+            "type": "rate",
+            "numerator": self.rate.numerator,
+            "denominator_size": self.rate.denominator.size,
+            "denominator_text": self.rate.denominator.render_text(),
+            "value": self.rate.value,
+        }
+
 
 @dataclass(frozen=True)
 class DistributionFigure(Figure):
@@ -412,7 +436,18 @@ class DistributionFigure(Figure):
         if self.excluded:
             parts.append("excluded:")
             parts.extend(f"  {label}: {count:,}" for label, count in self.excluded.items())
+        parts.append(f"Counted: {self.counted:,}. Excluded: {self.excluded_total:,}.")
         return "\n".join(parts)
+
+    def value_data(self) -> dict[str, Any]:
+        """Buckets and exclusions as mappings, with the two totals beside them."""
+        return {
+            "type": "distribution",
+            "values": dict(self.values),
+            "excluded": dict(self.excluded),
+            "counted": self.counted,
+            "excluded_total": self.excluded_total,
+        }
 
 
 @dataclass(frozen=True)
@@ -462,6 +497,16 @@ class Finding(Figure):
         lines.append(f"Cannot confirm: {self.cannot_confirm}")
         return "\n".join(lines)
 
+    def value_data(self) -> dict[str, Any]:
+        """The finding's fields as values rather than as rendered lines."""
+        return {
+            "type": "finding",
+            "what_was_observed": self.what_was_observed,
+            "suspected_cause": self.suspected_cause,
+            "where": self.where,
+            "cannot_confirm": self.cannot_confirm,
+        }
+
 
 @dataclass(frozen=True)
 class FigureGroup(Figure):
@@ -504,6 +549,16 @@ class FigureGroup(Figure):
 
     def value_text(self) -> str:
         return "\n".join(f"{figure.title}\n{figure.value_text()}" for figure in self.figures)
+
+    def value_data(self) -> dict[str, Any]:
+        """Each member's typed payload under its own title, in member order."""
+        return {
+            "type": "group",
+            "members": [
+                {"title": figure.title, "payload": figure.value_data()}
+                for figure in self.figures
+            ],
+        }
 
 
 class Measure(Protocol):

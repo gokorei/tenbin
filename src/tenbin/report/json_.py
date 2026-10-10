@@ -30,16 +30,23 @@ disagree about the read.
 that a ticket would, and the difference between ``null`` and a field somebody forgot is
 the difference between a decision and a bug. ``missing_fact`` is always present for a
 refusal, ``null`` when there is none, for the same reason. Everything else is the part
-text verbatim, identical to the Markdown, because a second machine-shaped rendering of
-a denominator would be one more thing to keep true and would add nothing a consumer can
+text verbatim, identical to the Markdown's full sections, because a second machine-shaped
+rendering of a denominator would be one more thing to keep true and would add nothing a consumer can
 do that the text does not already say.
+
+**``figure_data`` is the one typed exception, and it carries the same numbers.**
+A script given only ``{"figure": "..."}`` string-parses buckets out of prose, so a
+claim section also carries the figure's :meth:`~tenbin.measures.base.Figure.value_data`
+beside the text: same counts, keyed. Refusal sections carry none, because there is
+no figure to type.
 
 **What this module notably does not do:** it does not decide what a section contains or
 in what order -- it takes both from :mod:`tenbin.report.ordering` like every other
 consumer. It does not summarise, does not round, does not convert an enum into an
 inventoried vocabulary (the values rendered are the ones the snapshot and the claim
-already use, so a consumer matches on the words this program uses everywhere else), and
-does not emit anything the Markdown does not also say. In particular it never emits a
+already use, so a consumer matches on the words this program uses everywhere else).
+``figure_data`` is the one structured addition beside the prose, and it carries the
+same numbers the ``figure`` text does rather than new ones. In particular it never emits a
 section with a figure but no caveats: there is no code path that could produce one,
 because a section cannot be constructed in that state.
 """
@@ -138,7 +145,8 @@ def _section_as_dict(section: Section) -> dict[str, Any]:
     """One section: what identifies it, its parts in order, then its metadata.
 
     Identity first because a consumer indexing the array needs the slug before it has
-    anything else; the parts next, in reading order; the metadata last, because the
+    anything else; the parts next, in reading order; the typed ``figure_data`` after
+    the ``figure`` text it carries the same numbers as; the metadata last, because the
     claim's kind and granularity qualify the parts rather than introduce them.
     """
     body: dict[str, Any] = {
@@ -148,6 +156,8 @@ def _section_as_dict(section: Section) -> dict[str, Any]:
     }
     for part in ordered_parts(section):
         body[part.kind.value] = part.text
+    if section.figure is not None:
+        body["figure_data"] = section.figure.value_data()
     body.update(_section_metadata(section))
     return body
 
